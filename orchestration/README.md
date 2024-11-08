@@ -8,3 +8,8 @@ Cloudformation Template for building Event-Driven Orchestration Platform in AWS.
 - Lambda
    - Lambda subscribed to SQS
 
+### Steps
+- Use `sqs.cft.yaml` to create SNS topic
+- Use `subscriber.cft.yaml` to create subscription
+
+Can create multiple subscriptions as per need using same topic
