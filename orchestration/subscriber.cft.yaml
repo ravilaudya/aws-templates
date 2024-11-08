@@ -1,0 +1,200 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Orchestration Platform SQS Service
+
+Parameters:
+  EventsTopicName:
+    Type: String
+    Description: Event Orchestration Platform Topic Name (Should already exist)
+    Default: orchestration-events.fifo
+  EventsSQSName:
+    Type: String
+    Description: Event Orchestration Service Queue Name
+    Default: orchestration-events-service.fifo
+  EventsSQSDLQName:
+    Type: String
+    Description: Event Orchestration Service DLQ Name
+    Default: orchestration-events-service-dlq.fifo
+  LambdaFunctionName:
+    Type: String
+    Description: Event Orchestration Service Lambda Name
+    Default: orchestration-events-service-lambda
+  LambdaPolicyName:
+    Type: String
+    Description: Event Orchestration Service Lambda Policy Name
+    Default: orchestration-events-service-lambda-policy
+  LambdaRoleName:
+    Type: String
+    Description: Event Orchestration Service Lambda Role Name
+    Default: orchestration-events-service-lambda-role
+
+Resources:
+  EventsSQSDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      QueueName: !Ref EventsSQSDLQName
+      SqsManagedSseEnabled: true
+      VisibilityTimeout: 240
+      Tags:
+        - Key: "Tag1"
+          Value: "Value1"
+
+  EventsSQSQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      FifoQueue: true
+      DeduplicationScope: messageGroup
+      FifoThroughputLimit: perMessageGroupId
+      ContentBasedDeduplication: true
+      QueueName: !Ref EventsSQSName
+      SqsManagedSseEnabled: true
+      VisibilityTimeout: 120
+      RedrivePolicy:
+        deadLetterTargetArn: !Sub ${EventsSQSDLQ.Arn}
+        maxReceiveCount: 5
+      Tags:
+        - Key: "Tag1"
+          Value: "Value1"
+
+  EventsSQSQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Id: SQSQueuePolicy
+        Version: '2012-10-17'
+        Statement:
+        - Sid: Allow-User-SendMessage
+          Effect: Allow
+          Principal:
+            AWS: "*"
+          Action:
+          - sqs:*
+          Resource:
+          - !Sub ${EventsSQSQueue.Arn}
+      Queues:
+      - !Ref EventsSQSQueue
+
+  EventsSQSDLQPolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Id: DLQSQSQueuePolicy
+        Version: '2012-10-17'
+        Statement:
+        - Sid: Allow-User-SendMessage
+          Effect: Allow
+          Principal:
+            AWS: "*"
+          Action:
+          - sqs:*
+          Resource:
+          - !Sub ${EventsSQSDLQ.Arn}
+      Queues:
+      - !Ref EventsSQSDLQ
+
+  EventsSQSSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Protocol: sqs
+      Endpoint: !GetAtt EventsSQSQueue.Arn
+      TopicArn: !Sub 'arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:${EventsTopicName}'
+      RawMessageDelivery: true
+      FilterPolicyScope: "MessageBody"
+      # FilterPolicy:
+      RedrivePolicy:
+        deadLetterTargetArn: !Sub ${EventsSQSDLQ.Arn}
+
+  EventsLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref LambdaFunctionName
+      Description: Handle SQS Events for Orchestration Platform
+      Handler: index.lambda_handler
+      Runtime: python3.12
+      Timeout: 120
+      Role: !GetAtt EventsLambdaRole.Arn
+      Tags:
+        - Key: "Tag1"
+          Value: "Value1"
+      Code:
+        ZipFile: |
+          def lambda_handler(event, context):
+              print(F"Hurray! I got an event: {event}")
+
+
+  EventsLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - !Sub 'lambda.${AWS::URLSuffix}'
+          Action:
+          - sts:AssumeRole
+      Description: Role for Events Lambda
+      RoleName: !Ref LambdaRoleName
+      Policies:
+      - PolicyName: EventsLambdaRolePolicy
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:*
+            Resource:
+              - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/*:*'
+          - Effect: Allow
+            Action:
+            - "ec2:DescribeNetworkInterfaces"
+            - "ec2:CreateNetworkInterface"
+            - "ec2:DeleteNetworkInterface"
+            - "ec2:DescribeInstances"
+            - "ec2:AttachNetworkInterface"
+            Resource:
+              - '*'
+          - Effect: Allow
+            Action:
+            - sqs:*
+            Resource:
+              - !Sub ${EventsSQSQueue.Arn}
+              - !Sub ${EventsSQSDLQ.Arn}
+      Tags:
+        - Key: "Tag1"
+          Value: "Value1"
+
+  EventsSQSLambdaMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      Enabled: true
+      BatchSize: 1
+      EventSourceArn: !GetAtt EventsSQSQueue.Arn
+      FunctionName: !GetAtt EventsLambda.Arn
+
+  EventLambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${EventsLambda}'
+      RetentionInDays: 30
+
+  EventsLambdaIAMPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Ref LambdaPolicyName
+      Roles:
+        - Ref: EventsLambdaRole
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - sqs:*
+            Resource:
+            - !Sub ${EventsSQSQueue.Arn}
+            - !Sub ${EventsSQSDLQ.Arn}
+
+
+## TODO: Alarms

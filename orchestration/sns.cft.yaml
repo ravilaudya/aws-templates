@@ -1,0 +1,79 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Orchestration Platform SNS Topic
+
+Parameters:
+  EventsTopicName:
+    Type: String
+    Description: Event Orchestration Platform Topic Name
+    Default: orchestration-events.fifo
+  IAMRoleName:
+    Type: String
+    Default: orchestration-events-iam-role
+    Description: Event Orchestration Platform IAM Role
+
+Resources:
+  EventTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: !Ref EventsTopicName
+      TopicName: !Ref EventsTopicName
+      FifoTopic: true
+      ContentBasedDeduplication: true
+      KmsMasterKeyId:  "alias/aws/sns"
+      Tags:
+        - Key: "Tag1"
+          Value: "Value1"
+
+  EventTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      PolicyDocument:
+        Id: sns-topic-policy
+        Version: '2012-10-17'
+        Statement:
+        - Sid: sns-topic-statement
+          Effect: Allow
+          Principal:
+            AWS: '*'
+          Action:
+          - SNS:GetTopicAttributes
+          - SNS:SetTopicAttributes
+          - SNS:AddPermission
+          - SNS:RemovePermission
+          - SNS:DeleteTopic
+          - SNS:Subscribe
+          - SNS:ListSubscriptionsByTopic
+          - SNS:Publish
+          - SNS:Receive
+          Resource: !Ref EventTopic
+          Condition:
+            StringEquals:
+              'AWS:SourceOwner': !Ref 'AWS::AccountId'
+      Topics:
+        - !Ref EventTopic
+
+  SNSIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${IAMRoleName}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: sns.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+        - PolicyName: !Sub '${IAMRoleName}-policy'
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+            - Effect: "Allow"
+              Action:
+              - logs:*
+              Resource: '*'
+      Tags:
+      - Key: "Tag1"
+        Value: "Value1"
