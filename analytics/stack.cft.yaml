@@ -50,7 +50,7 @@ Resources:
       VisibilityTimeout: 240
       RedrivePolicy:
         deadLetterTargetArn: !Sub ${EventQueueDLQ.Arn}
-        maxReceiveCount: 1
+        maxReceiveCount: 5
 
   EventsQueuePolicy:
     Type: AWS::SQS::QueuePolicy
@@ -71,7 +71,7 @@ Resources:
       - !Ref EventQueue
     
   EventsDatabase:
-    Description: 'Timestream database to store event data processed by the event processor Lambda'
+    Description: 'Timestream database to store event data'
     Type: 'AWS::Timestream::Database'
     Properties:
       DatabaseName: !Ref EventsDatabaseName
@@ -192,7 +192,7 @@ Resources:
 
   SQSToLambdaEventSourceMapping:
     Type: 'AWS::Lambda::EventSourceMapping'
-    Description: 'Maps the SQS queue as the event source for the Lambda function to process messages.'
+    Description: 'Maps the SQS queue as the event source for the Lambda function.'
     Properties:
       BatchSize: 10
       EventSourceArn: !GetAtt EventQueue.Arn

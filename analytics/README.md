@@ -12,7 +12,7 @@ Cloudformation Template for Analytics Platform for E-Commerce Application. It cr
 
 ### Steps
 - Use `stack.cft.yaml` to create above resources
-- Send event to SQS in the following format
+- Sending the event to SQS in the following format triggers the processing flow
 ```
 {
   "order_id": "test-order-1",
