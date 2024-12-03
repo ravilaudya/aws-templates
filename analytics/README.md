@@ -28,3 +28,7 @@ Cloudformation Template for Analytics Platform for E-Commerce Application. It cr
 
 SELECT * FROM "events-db"."events-metrics" WHERE time between ago(15m) and now() ORDER BY time DESC LIMIT 10
 ```
+
+- Architecture
+
+  ![aws-analytics-timestream](https://github.com/user-attachments/assets/7a1e7999-a9e7-460b-9cfa-c1cd83724fd4)
