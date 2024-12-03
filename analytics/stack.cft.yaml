@@ -1,0 +1,233 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  SQSQueueName:
+    Type: String
+    Default: 'events-queue.fifo'
+    Description: 'The name of the FIFO SQS queue that receives events'
+
+  DLQQueueName:
+    Type: String
+    Default: 'events-queue-dlq.fifo'
+    Description: 'The name of the DLQ SQS queue that receives failed events'
+      
+  EventsDatabaseName:
+    Type: String
+    Default: 'events-db'
+    Description: 'The name of the Timestream database to store events'
+    
+  EventsTableName:
+    Type: String
+    Default: 'events-metrics'
+    Description: 'The name of the Timestream table to store events'
+    
+  LambdaFunctionName:
+    Type: String
+    Default: 'events-processor'
+    Description: 'The name of the Lambda function to process events from SQS and write to Timestream.'
+
+
+Resources:
+
+  EventQueueDLQ:
+    Description: 'An DLQ queue that receives failed events'
+    Type: AWS::SQS::Queue
+    Properties:
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      QueueName: !Ref DLQQueueName
+      SqsManagedSseEnabled: true
+      VisibilityTimeout: 240
+  
+  EventQueue:
+    Description: 'An SQS queue that receives events'
+    Type: 'AWS::SQS::Queue'
+    Properties:
+      QueueName: !Ref SQSQueueName
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      KmsMasterKeyId: alias/aws/sqs
+      VisibilityTimeout: 240
+      RedrivePolicy:
+        deadLetterTargetArn: !Sub ${EventQueueDLQ.Arn}
+        maxReceiveCount: 1
+
+  EventsQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyDocument:
+        Id: SQSQueuePolicy
+        Version: '2012-10-17'
+        Statement:
+        - Sid: Allow-User-SendMessage
+          Effect: Allow
+          Principal:
+            AWS: "*"
+          Action:
+          - sqs:*
+          Resource:
+          - !Sub ${EventQueue.Arn}
+      Queues:
+      - !Ref EventQueue
+    
+  EventsDatabase:
+    Description: 'Timestream database to store event data processed by the event processor Lambda'
+    Type: 'AWS::Timestream::Database'
+    Properties:
+      DatabaseName: !Ref EventsDatabaseName
+      KmsKeyId: alias/aws/timestream
+
+  EventsTable:
+    Description: 'Timestream table that stores event metrics'
+    Type: 'AWS::Timestream::Table'
+    DependsOn: EventsDatabase
+    Properties:
+      DatabaseName: !Ref EventsDatabase
+      TableName: !Ref EventsTableName
+      RetentionProperties:
+        MemoryStoreRetentionPeriodInHours: 72
+        MagneticStoreRetentionPeriodInDays: 365
+
+  LambdaExecutionRole:
+    Description: 'Event Processor Lambda IAM Role'
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Effect: 'Allow'
+            Principal:
+              Service: 'lambda.amazonaws.com'
+      Policies:
+        - PolicyName: 'LambdaSQSTimestreamPolicy'
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                  - 'sqs:ReceiveMessage'
+                  - 'sqs:DeleteMessage'
+                  - 'sqs:GetQueueAttributes'
+                Effect: 'Allow'
+                Resource: !GetAtt EventQueue.Arn
+              - Action:
+                - 'timestream:WriteRecords'
+                Effect: 'Allow'
+                Resource: !Sub 'arn:aws:timestream:${AWS::Region}:${AWS::AccountId}:database/${EventsDatabaseName}/table/${EventsTableName}'
+              - Action:
+                - 'timestream:DescribeEndpoints'
+                Effect: 'Allow'
+                Resource: '*'
+          
+  EventProcessorLambda:
+    Type: 'AWS::Lambda::Function'
+    Description: 'Lambda function that processes events from the SQS queue and writes to Timestream.'
+    Properties:
+      FunctionName: !Ref LambdaFunctionName
+      Handler: 'index.lambda_handler'
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Runtime: 'python3.12'
+      MemorySize: 1024
+      Timeout: 120
+      Environment:
+        Variables:
+          TIMESTREAM_DATABASE_NAME: !Ref EventsDatabaseName
+          TIMESTREAM_TABLE_NAME: !Ref EventsTableName
+      Code:
+        ZipFile: |
+          import json, boto3, os, time, logging
+          from botocore.exceptions import ClientError
+          logger = logging.getLogger()
+          logger.setLevel('INFO')
+
+          timestream_client = boto3.client('timestream-write')
+          DATABASE_NAME = os.environ['TIMESTREAM_DATABASE_NAME']
+          TABLE_NAME = os.environ['TIMESTREAM_TABLE_NAME']
+
+          def write_records(payload):
+              order_id = payload.get('order_id')
+              customer_id = payload.get('customer_id')
+              event_type = payload.get('event_type')
+              metric_value = payload.get('metric_value')
+              timestamp = int(time.time() * 1000)  # Current time in milliseconds
+              
+              dimensions = [
+                  {'Name': 'order_id', 'Value': str(order_id)},
+                  {'Name': 'customer_id', 'Value': str(customer_id)},
+              ]
+              records = [
+                  {
+                      'Dimensions': dimensions,
+                      'MeasureName': str(event_type),
+                      'MeasureValue': str(metric_value),
+                      'MeasureValueType': 'DOUBLE',
+                      'Time': str(timestamp)
+                  }
+              ]
+              try:
+                  response = timestream_client.write_records(
+                      DatabaseName=DATABASE_NAME,
+                      TableName=TABLE_NAME,
+                      Records=records
+                  )
+                  logger.info(f"Successfully written to Timestream: {response}")
+
+              except ClientError as e:
+                  logger.error(f"Error writing to Timestream: {e}", exc_info=True)
+                  rejected_records = e.response.get('RejectedRecords', [])
+                  for record in rejected_records:
+                      logger.error(f"Rejected Record: {record.get('RecordIndex')}, Reason: {record.get('Reason')}")
+                      logger.debug(f"Rejected Record Details: {record}")
+                  raise
+              except Exception as e:
+                  logger.error(f"Unexpected Error writing to Timestream: {e}", exc_info=True)
+                  raise
+
+          def lambda_handler(event, context):
+              logger.info(f"Received event: {event}")
+              for record in event["Records"]:
+                  logger.info(f"Record: {record.get('body')}")
+                  payload = json.loads(record["body"])
+                  write_records(payload)
+
+  SQSToLambdaEventSourceMapping:
+    Type: 'AWS::Lambda::EventSourceMapping'
+    Description: 'Maps the SQS queue as the event source for the Lambda function to process messages.'
+    Properties:
+      BatchSize: 10
+      EventSourceArn: !GetAtt EventQueue.Arn
+      FunctionName: !GetAtt EventProcessorLambda.Arn
+      Enabled: 'True'
+
+  CloudWatchEventPolicy:
+    Type: 'AWS::IAM::Policy'
+    Properties:
+      PolicyName: 'CloudWatchEventPolicy'
+      Roles:
+        - !Ref LambdaExecutionRole
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Action: 'logs:*'
+            Effect: 'Allow'
+            Resource: '*'
+    Description: 'IAM policy granting Lambda permissions to interact with CloudWatch logs.'
+
+#TODO: Add alerts
+
+Outputs:
+  EventQueueUrl:
+    Description: 'The URL of the created SQS Queue'
+    Value: !Ref EventQueue
+
+  LambdaFunctionName:
+    Description: 'The name of the Lambda function'
+    Value: !Ref EventProcessorLambda
+
+  EventsDatabaseName:
+    Description: 'The name of the Timestream database'
+    Value: !Ref EventsDatabaseName
+
+  EventsTableName:
+    Description: 'The name of the Timestream table'
+    Value: !Ref EventsTableName
