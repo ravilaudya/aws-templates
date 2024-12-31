@@ -17,6 +17,7 @@ echo -n '{"id": 1, "value": 100, "timestamp": 1678901234}' | base64
 #### output 
 eyJpZCI6IDEsICJ2YWx1ZSI6IDEwMCwgInRpbWVzdGFtcCI6IDE2Nzg5MDEyMzR9
 
+### Put record into Kinesis data stream
 aws kinesis put-record \
    --stream-name ravi-test-analytics-stream \
    --data 'eyJpZCI6IDEsICJ2YWx1ZSI6IDEwMCwgInRpbWVzdGFtcCI6IDE2Nzg5MDEyMzR9' \
@@ -30,9 +31,9 @@ aws kinesis put-record \
 
 ```
 
-- Query S3
+- Query S3 Bucket Objects
 ```
 aws s3 ls s3://ravi-test-analytics-bucket --recursive
-# output
+#### output
 2024-12-31 15:45:08    48 raw-data/2024/12/31/23 test-analytics-stream-firehose-2-2024-12-31-23-40-05-0d33777b-662d-4d69-abeb-1c5024ac3cfe
 ```
