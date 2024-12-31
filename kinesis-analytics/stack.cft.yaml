@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Parameters:
+  KinesisStreamName:
+    Type: String
+    Default: 'test-analytics-stream'
+    Description: 'The name of the Kinesis data stream that receives data'
+
+  BucketName:
+    Type: String
+    Default: 'test-analytics-bucket'
+    Description: 'The name of the S3 bucket to store data'
+
+Resources:
+
+  KinesisDataStream:
+    Type: AWS::Kinesis::Stream
+    Properties:
+      Name: !Ref KinesisStreamName
+      RetentionPeriodHours: 72
+      StreamModeDetails:
+        StreamMode: ON_DEMAND
+
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: True
+        BlockPublicPolicy: True
+        IgnorePublicAcls: True
+        RestrictPublicBuckets: True
+
+  # IAM Role for Kinesis Firehose to write to S3
+  FirehoseRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: firehose.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: FirehoseS3WriteAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "s3:PutObject"
+                Resource: !Sub arn:aws:s3:::${S3Bucket}/*
+
+        - PolicyName: FirehoseLogsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:PutLogEvents
+                  - logs:CreateLogStream
+                  - logs:DescribeLogStreams
+                  - logs:CreateLogGroup
+                Resource: "arn:aws:logs:*:*:*"
+
+        - PolicyName: FirehoseKinesisReadAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "kinesis:DescribeStream"
+                  - "kinesis:GetShardIterator"
+                  - "kinesis:GetRecords"
+                Resource: !GetAtt KinesisDataStream.Arn
+
+  FirehoseDeliveryStream:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Properties:
+      DeliveryStreamName: !Sub ${KinesisStreamName}-firehose
+      DeliveryStreamType: KinesisStreamAsSource
+      KinesisStreamSourceConfiguration:
+        KinesisStreamARN: !GetAtt KinesisDataStream.Arn
+        RoleARN: !GetAtt FirehoseRole.Arn
+      ExtendedS3DestinationConfiguration:
+        BucketARN: !GetAtt S3Bucket.Arn
+        RoleARN: !GetAtt FirehoseRole.Arn
+        Prefix: raw-data/
+        CompressionFormat: UNCOMPRESSED
+        CloudWatchLoggingOptions:
+          Enabled: true
+          LogGroupName: !Sub "/aws/kinesisfirehose/${KinesisStreamName}"
+          LogStreamName: "error-logs"
+
+
+#TODO: Add alerts
+
+Outputs:
+  KinesisDataStreamName:
+    Description: "Kinesis Data Stream name"
+    Value: !Ref KinesisDataStream
+
+  FirehoseDeliveryStreamName:
+    Description: "Firehose Delivery Stream name"
+    Value: !Ref FirehoseDeliveryStream
+
+  S3BucketName:
+    Description: "S3 Bucket name"
+    Value: !Ref S3Bucket
+
