@@ -37,3 +37,7 @@ aws s3 ls s3://ravi-test-analytics-bucket --recursive
 #### output
 2024-12-31 15:45:08    48 raw-data/2024/12/31/23 test-analytics-stream-firehose-2-2024-12-31-23-40-05-0d33777b-662d-4d69-abeb-1c5024ac3cfe
 ```
+
+- Architecture
+
+![Screenshot 2024-12-31 at 4 00 56 PM](https://github.com/user-attachments/assets/6dea6c97-03d9-4a95-a031-421dd7c0c896)
