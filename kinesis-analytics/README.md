@@ -40,4 +40,4 @@ aws s3 ls s3://ravi-test-analytics-bucket --recursive
 
 - Architecture
 
-![Screenshot 2024-12-31 at 4 00 56 PM](https://github.com/user-attachments/assets/6dea6c97-03d9-4a95-a031-421dd7c0c896)
+![Screenshot 2024-12-31 at 4 02 04 PM](https://github.com/user-attachments/assets/fcd68956-3737-4c76-88d8-5b93ebb89a7d)
